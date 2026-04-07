@@ -1,0 +1,77 @@
+name: medical-triage-prioritization
+version: "1.0.0"
+description: >
+  Emergency department triage environment where agents assign ESI levels
+  (Emergency Severity Index 1-5) to patients and rank them by urgency.
+  Grounded in a real 246,945-record disease-symptom dataset (773 diseases,
+  377 symptoms). Simulates a task that real triage nurses perform daily.
+
+author: OpenEnv Submission
+license: Apache-2.0
+
+domain: healthcare
+task_type: ranking
+difficulty_levels: [easy, medium, hard]
+
+observation_space:
+  type: structured
+  description: >
+    TriageObservation containing: task_id, step, list of Patient objects
+    (each with age, sex, chief_complaint, symptoms[], vitals{}, history),
+    context narrative, and action_required instruction.
+
+action_space:
+  type: structured
+  description: >
+    TriageAction containing: rankings[] (ordered list of PatientRanking:
+    patient_id, esi_level 1-5, rationale string) + optional additional_notes.
+
+reward_space:
+  type: continuous
+  range: [0.0, 1.0]
+  components:
+    - name: esi_accuracy
+      weight: 0.30
+      description: Exact + near-miss ESI level accuracy
+    - name: rank_order
+      weight: 0.25
+      description: Kendall-tau rank correlation with ground truth ordering
+    - name: critical_catch
+      weight: 0.25
+      description: Whether ESI-1/2 patients appear in the top urgency slots
+    - name: rationale_quality
+      weight: 0.20
+      description: Heuristic keyword-based clinical reasoning assessment
+    - name: penalties
+      weight: varies
+      description: Deductions for dangerous ESI misclassification (up to -0.5)
+
+tasks:
+  - id: easy
+    description: 3 patients with textbook presentations (heart attack, UTI, panic disorder)
+    n_patients: 3
+    expected_score_range: [0.7, 1.0]
+
+  - id: medium
+    description: 8 patients with overlapping severity (stroke, meningitis, appendicitis, PE, asthma, pneumonia, migraine, gastroenteritis)
+    n_patients: 8
+    expected_score_range: [0.5, 0.85]
+
+  - id: hard
+    description: 15 patients with misleading vitals and time-critical conditions (AAA, ectopic, sepsis, cardiac arrest + decoys)
+    n_patients: 15
+    expected_score_range: [0.3, 0.75]
+
+interface:
+  reset: "env.reset() -> TriageObservation"
+  step:  "env.step(action: TriageAction) -> (TriageObservation, TriageReward, bool, dict)"
+  state: "env.state() -> TriageState"
+
+dataset:
+  source: "Augmented Disease & Symptoms Dataset"
+  records: 246945
+  diseases: 773
+  symptom_features: 377
+  usage: "Symptom prevalence rates used to construct authentic patient symptom profiles"
+
+tags: [openenv, healthcare, triage, ranking, esi, medical, real-world]
