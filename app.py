@@ -366,7 +366,7 @@ with gr.Blocks(title="Medical Triage Prioritization — OpenEnv", theme=gr.theme
     submit_btn.click(submit_ranking, inputs=[task_selector, ranking_input],          outputs=result_display)
     ai_btn.click(run_ai_baseline,    inputs=[task_selector, model_input, seed_input], outputs=[result_display, ranking_input])
 
-app = gr.mount_gradio_app(app, demo, path="/ui")
+app = gr.mount_gradio_app(app, demo, path="/")
 
 import uvicorn
 if __name__ == "__main__":
