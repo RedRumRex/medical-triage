@@ -18,11 +18,11 @@ except ImportError:
 from src.medical_triage import MedicalTriageEnv, TriageAction, PatientRanking
 from typing import Literal
 
-def main():
-    app = FastAPI()
-    return app
+# def main():
+#     app = FastAPI()
+#     return app
 
-app = main()
+# app = main()
 
 
 class ResetRequest(BaseModel):
@@ -369,10 +369,13 @@ with gr.Blocks(title="Medical Triage Prioritization — OpenEnv", theme=gr.theme
 
 app = gr.mount_gradio_app(app, demo, path="/")
 
+# def main():
+#     return app
 def main():
-    return app
-
-
-import uvicorn
-if __name__ == "__main__":
+    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=7860)
+
+
+# import uvicorn
+# if __name__ == "__main__":
+#     uvicorn.run(app, host="0.0.0.0", port=7860)
