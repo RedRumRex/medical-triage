@@ -3,8 +3,7 @@ title: Medical Triage Prioritization
 emoji: 🏥
 colorFrom: red
 colorTo: blue
-sdk: gradio
-sdk_version: "4.0.0"
+sdk: docker
 app_file: app.py
 pinned: false
 tags: [openenv, healthcare, triage, ranking, esi, medical, real-world]
