@@ -20,9 +20,6 @@ from typing import Literal
 
 app = FastAPI()
 
-@app.get("/")
-def root():
-    return {"message": "API is running"}
 
 class ResetRequest(BaseModel):
     task_id: Literal["easy", "medium", "hard"] = "easy"
