@@ -2,6 +2,7 @@
 Gradio demo for Medical Triage Env.
 OpenAI API key is read from the OPENAI_API_KEY environment variable.
 """
+#temp
 from fastapi import FastAPI
 from pydantic import BaseModel
 
@@ -23,9 +24,11 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-class ResetRequest(BaseModel):
-    task_id: str
+from typing import Literal
 
+class ResetRequest(BaseModel):
+    task_id: Literal["easy", "medium", "hard"] = "easy"
+    
 class StepRequest(BaseModel):
     task_id: str
     rankings: list
