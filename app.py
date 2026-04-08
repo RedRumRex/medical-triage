@@ -302,16 +302,22 @@ def run_ai_baseline(task_id: str, model: str, seed: int) -> tuple[str, str]:
         return f"❌ API error: {e}", ""
 
 @app.post("/reset")
-def reset_env(req: ResetRequest):
-    env = MedicalTriageEnv(task_id=req.task_id)
-    obs = env.reset()
-    _envs[req.task_id] = env
+def reset_env(req: ResetRequest = ResetRequest()):
+    try:
+        task_id = req.task_id if req else "easy"
 
-    return {
-        "patients": [p.patient_id for p in obs.patients],
-        "context": obs.context,
-        "action_required": obs.action_required
-    }
+        env = MedicalTriageEnv(task_id=task_id)
+        obs = env.reset()
+        _envs[task_id] = env
+
+        return {
+            "patients": [p.patient_id for p in obs.patients],
+            "context": obs.context,
+            "action_required": obs.action_required
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 @app.post("/step")
 def step_env(req: StepRequest):
     env = _envs.get(req.task_id)
