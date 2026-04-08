@@ -1,48 +1,35 @@
-#!/usr/bin/env python3
 """
-inference.py — Competition-compliant inference script for Medical Triage Prioritization.
+Inference Script — Medical Triage Prioritization
+===================================
+MANDATORY environment variables:
+    API_BASE_URL      The API endpoint for the LLM.
+    MODEL_NAME        The model identifier to use for inference.
+    HF_TOKEN          Your Hugging Face / API key.
 
-Required environment variables:
-  API_BASE_URL  : The API endpoint for the LLM (OpenAI-compatible)
-  MODEL_NAME    : The model identifier to use for inference
-  HF_TOKEN      : Your Hugging Face / API key
-
-Structured stdout logs follow [START], [STEP], [END] format strictly.
-Runtime target: < 20 minutes | Machine: vcpu=2, memory=8gb
+STDOUT FORMAT:
+    [START] task=<task_name> env=<benchmark> model=<model_name>
+    [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+    [END]   success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
 """
-from __future__ import annotations
+
 import os
 import sys
 import json
 import textwrap
-import time
-
-# ── Path setup ────────────────────────────────────────────────────────────────
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+from typing import List, Optional
 
 from openai import OpenAI
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 from src.medical_triage import MedicalTriageEnv, TriageAction, PatientRanking
 
-# ── Environment variables (mandatory per competition rules) ───────────────────
-API_BASE_URL = os.environ.get("API_BASE_URL", "").strip()
-MODEL_NAME   = os.environ.get("MODEL_NAME",   "").strip()
-HF_TOKEN     = os.environ.get("HF_TOKEN",     "").strip()
-
-if not API_BASE_URL:
-    print(json.dumps({"error": "API_BASE_URL environment variable is not set"}))
-    sys.exit(1)
-if not MODEL_NAME:
-    print(json.dumps({"error": "MODEL_NAME environment variable is not set"}))
-    sys.exit(1)
-if not HF_TOKEN:
-    print(json.dumps({"error": "HF_TOKEN environment variable is not set"}))
-    sys.exit(1)
-
-# ── OpenAI Client (using competition-required variables) ──────────────────────
-client = OpenAI(
-    api_key=HF_TOKEN,
-    base_url=API_BASE_URL,
-)
+# ── Config ────────────────────────────────────────────────────────────────────
+API_KEY      = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL") or "https://api.openai.com/v1"
+MODEL_NAME   = os.getenv("MODEL_NAME")  or "gpt-4o"
+BENCHMARK    = "medical-triage"
+TASKS        = ["easy", "medium", "hard"]
+SUCCESS_SCORE_THRESHOLD = 0.1  # normalized score in [0, 1]
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = textwrap.dedent("""
@@ -79,6 +66,29 @@ Most urgent patient FIRST. Include ALL patients. No markdown fences.
 """).strip()
 
 
+# ── Logging helpers (matching sample script exactly) ─────────────────────────
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    error_val = error if error else "null"
+    done_val  = str(done).lower()
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
+    )
+
+
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
+
+
+# ── Patient prompt builder ────────────────────────────────────────────────────
 def build_patient_prompt(obs) -> str:
     lines = [
         f"TRIAGE SCENARIO: {obs.context}\n",
@@ -102,127 +112,96 @@ def build_patient_prompt(obs) -> str:
     return "\n".join(lines)
 
 
-def run_task(task_id: str) -> dict:
-    env  = MedicalTriageEnv(task_id=task_id)
-    obs  = env.reset()
-
-    # ── [STEP] log ────────────────────────────────────────────────────────
-    print(json.dumps({
-        "type":    "[STEP]",
-        "task_id": task_id,
-        "step":    0,
-        "status":  "calling_llm",
-        "model":   MODEL_NAME,
-        "n_patients": len(obs.patients),
-    }), flush=True)
-
-    prompt   = build_patient_prompt(obs)
-    response = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": prompt},
-        ],
-        temperature=0.0,
-    )
-    raw = response.choices[0].message.content.strip()
-
-    # Strip markdown fences if model disobeys
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-
-    # ── Parse response ────────────────────────────────────────────────────
+# ── LLM call ──────────────────────────────────────────────────────────────────
+def get_triage_action(client: OpenAI, obs) -> tuple[TriageAction, str]:
+    """Call LLM and return a TriageAction + action string for logging."""
+    user_prompt = build_patient_prompt(obs)
     try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt},
+            ],
+            temperature=0.0,
+            stream=False,
+        )
+        raw = (completion.choices[0].message.content or "").strip()
+
+        # Strip markdown fences if model disobeys
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
         data   = json.loads(raw)
         action = TriageAction(
             rankings=[PatientRanking(**r) for r in data["rankings"]],
             additional_notes=data.get("additional_notes"),
         )
-    except Exception as e:
-        print(json.dumps({
-            "type":    "[STEP]",
-            "task_id": task_id,
-            "step":    0,
-            "status":  "parse_error",
-            "error":   str(e),
-        }), flush=True)
-        data   = {"rankings": [
-            {"patient_id": p.patient_id, "esi_level": 3,
-             "rationale": "Parse error — fallback assignment"}
-            for p in obs.patients
-        ]}
-        action = TriageAction(rankings=[PatientRanking(**r) for r in data["rankings"]])
+        action_str = f"triage({len(data['rankings'])}patients)"
+        return action, action_str
 
-    _, reward, done, info = env.step(action)
-
-    # ── [STEP] result log ─────────────────────────────────────────────────
-    print(json.dumps({
-        "type":             "[STEP]",
-        "task_id":          task_id,
-        "step":             1,
-        "status":           "scored",
-        "total":            round(reward.total, 4),
-        "esi_accuracy":     round(reward.esi_accuracy, 4),
-        "rank_order":       round(reward.rank_order, 4),
-        "critical_catch":   round(reward.critical_catch, 4),
-        "rationale_quality":round(reward.rationale_quality, 4),
-        "penalties":        round(reward.penalties, 4),
-    }), flush=True)
-
-    return {
-        "task_id":          task_id,
-        "total":            reward.total,
-        "esi_accuracy":     reward.esi_accuracy,
-        "rank_order":       reward.rank_order,
-        "critical_catch":   reward.critical_catch,
-        "rationale_quality":reward.rationale_quality,
-        "penalties":        reward.penalties,
-        "reward":           reward.total,   # alias for grader compatibility
-    }
+    except Exception as exc:
+        # Fallback: assign ESI-3 to all patients
+        obs_patients = obs.patients
+        action = TriageAction(rankings=[
+            PatientRanking(patient_id=p.patient_id, esi_level=3,
+                           rationale="Fallback — parse error")
+            for p in obs_patients
+        ])
+        return action, f"fallback_triage({len(obs_patients)}patients)"
 
 
-def main():
-    start_time = time.time()
-    tasks      = ["easy", "medium", "hard"]
+# ── Main ──────────────────────────────────────────────────────────────────────
+def main() -> None:
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    # ── [START] log ───────────────────────────────────────────────────────
-    print(json.dumps({
-        "type":      "[START]",
-        "model":     MODEL_NAME,
-        "api_base":  API_BASE_URL,
-        "tasks":     tasks,
-        "timestamp": start_time,
-    }), flush=True)
+    for task_id in TASKS:
+        rewards:     List[float] = []
+        steps_taken: int         = 0
+        score:       float       = 0.0
+        success:     bool        = False
 
-    results = []
-    for task_id in tasks:
-        result = run_task(task_id)
-        results.append(result)
+        log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
-    avg_score = sum(r["total"] for r in results) / len(results)
+        env = MedicalTriageEnv(task_id=task_id)
 
-    # ── [END] log ─────────────────────────────────────────────────────────
-    print(json.dumps({
-        "type":          "[END]",
-        "tasks_completed": len(results),
-        "results":       [
-            {
-                "task_id":           r["task_id"],
-                "reward":            round(r["total"], 4),
-                "esi_accuracy":      round(r["esi_accuracy"], 4),
-                "rank_order":        round(r["rank_order"], 4),
-                "critical_catch":    round(r["critical_catch"], 4),
-                "rationale_quality": round(r["rationale_quality"], 4),
-                "penalties":         round(r["penalties"], 4),
-            }
-            for r in results
-        ],
-        "average_reward":  round(avg_score, 4),
-        "elapsed_seconds": round(time.time() - start_time, 2),
-    }), flush=True)
+        try:
+            obs  = env.reset()
+            step = 1
+
+            # Single-step environment — one triage ranking per episode
+            action, action_str = get_triage_action(client, obs)
+
+            try:
+                _, reward_obj, done, info = env.step(action)
+                reward    = round(reward_obj.total, 2)
+                done_flag = done
+                error     = None
+            except Exception as e:
+                reward    = 0.0
+                done_flag = False
+                error     = str(e).replace("\n", " ")
+
+            rewards.append(reward)
+            steps_taken = step
+
+            log_step(step=step, action=action_str, reward=reward,
+                     done=done_flag, error=error)
+
+            score   = min(max(reward, 0.0), 1.0)  # clamp to [0, 1]
+            success = score >= SUCCESS_SCORE_THRESHOLD
+
+        except Exception as e:
+            error_msg = str(e).replace("\n", " ")
+            log_step(step=1, action="null", reward=0.0, done=False, error=error_msg)
+            rewards     = [0.0]
+            steps_taken = 1
+
+        finally:
+            log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 if __name__ == "__main__":
