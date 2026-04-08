@@ -18,7 +18,10 @@ except ImportError:
 from src.medical_triage import MedicalTriageEnv, TriageAction, PatientRanking
 from typing import Literal
 
-app = FastAPI()
+def main():
+    app = FastAPI()
+    return app
+app = main()
 
 
 class ResetRequest(BaseModel):
