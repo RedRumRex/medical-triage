@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "medical-triage-env"
+version = "1.0.0"
+description = "Medical Triage Prioritization OpenEnv Environment"
+requires-python = ">=3.10"
+dependencies = [
+    "gradio>=4.0.0",
+    "openai>=1.0.0",
+    "pydantic>=2.0.0",
+    "fastapi",
+    "uvicorn",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
